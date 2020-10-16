@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package functional
 
 import (
@@ -61,63 +77,37 @@ func setUpRitSingleUnix() {
 	fmt.Println("Running Setup for Unix..")
 
 	fmt.Println("Running INIT")
-	initStepEcho := Step{Key: "", Value: "{\"passphrase\":\"12345\"}", Action: "echo"}
-	initStepRit := Step{Key: "", Value: "init --stdin", Action: "rit"}
-	init := Scenario{Entry: "Running Init", Result: "", Steps: []Step{initStepEcho, initStepRit}}
+	initStepRit := Step{Key: "", Value: "init", Action: "rit"}
+	initAcceptsMetrics := Step{
+		Key:    "and feature use statistics and crash reports?\u001B[0m  \u001B[36m[Use arrows to move, type to filter]\u001B[0m",
+		Value:  "Yes, I agree to contribute with data anonymously",
+		Action: "select"}
+	initAddRepo := Step{
+		Key:    "Would you like to add the community repository? [https://github.com/ZupIT/ritchie-formulas]",
+		Value:  "yes",
+		Action: "select"}
+	initSetRunType := Step{
+		Key:    "Select a default formula run type:",
+		Value:  "local",
+		Action: "select",
+	}
 
-	_, err := init.runStdinForUnix()
+	init := Scenario{Entry: "Running Init", Result: "", Steps: []Step{initStepRit, initAcceptsMetrics, initAddRepo, initSetRunType}}
+
+	err, _ := init.runStepsForUnix()
 	if err != nil {
 		log.Printf("Error when do init: %q", err)
 	}
-
-}
-
-func setUpRitTeamUnix(){
-	fmt.Println("Running Setup for Unix Team..")
-
-	fmt.Println("Running INIT")
-	initStepEcho := Step{Key: "", Value: "{\"organization\":\"zup\", \"url\":\"https://ritchie-server.itiaws.dev\"}", Action: "echo"}
-	initStepRit := Step{Key: "", Value: "init --stdin", Action: "rit"}
-	init := Scenario{Entry: "Running Init", Result: "", Steps: []Step{initStepEcho, initStepRit}}
-
-	out, err := init.runStdinForUnix()
-	if err != nil {
-		log.Printf("Error when do init: %q", err)
-	}
-	fmt.Println(out)
-
-	fmt.Println("Running Login")
-	loginStepEcho := Step{Key: "", Value: "{\"username\":\"admin.ritchie\", \"password\":\"C@m@r0@m@r3l0\"}", Action: "echo"}
-	loginStepRit := Step{Key: "", Value: "login --stdin", Action: "rit"}
-	login := Scenario{Entry: "Running Init", Result: "", Steps: []Step{loginStepEcho, loginStepRit}}
-
-	out, err = login.runStdinForUnix()
-	if err != nil {
-		log.Printf("Error when do Login: %q", err)
-	}
-	fmt.Println(out)
 }
 
 func setUpClearSetupUnix() {
 	fmt.Println("Running Clear for Unix..")
-	myPath := "/.rit/"
+	myPath := ".rit"
 	usr, _ := user.Current()
-	dir := usr.HomeDir + myPath
+	dir := filepath.Join(usr.HomeDir, myPath)
 
-	d, err := os.Open(dir)
-	if err != nil {
-		log.Printf("Error Open dir: %q", err)
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		log.Printf("Error Readdirnames: %q", err)
-	}
-	for _, name := range names {
-		err := os.RemoveAll(filepath.Join(dir, name))
-		if err != nil {
-			log.Printf("Error cleaning repo rit: %q", err)
-		}
+	if err := os.RemoveAll(dir); err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -219,7 +209,7 @@ func sendKeys(step Step, out io.Reader, stdin io.WriteCloser) error {
 	valueFinal := step.Value + "\n"
 	scanner := scannerTerminal(out)
 	startKey := false
-	//Need to work on this possibility
+	// Need to work on this possibility
 	// optionNumber := 0
 	for scanner.Scan() {
 		m := scanner.Text()

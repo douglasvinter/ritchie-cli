@@ -1,62 +1,62 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package runner
 
 import (
 	"fmt"
-	"os/exec"
+	"path/filepath"
 
-	"github.com/ZupIT/ritchie-cli/pkg/file/fileutil"
 	"github.com/ZupIT/ritchie-cli/pkg/formula"
+	"github.com/ZupIT/ritchie-cli/pkg/stream"
 )
 
 type PostRunnerManager struct {
+	file stream.FileNewListMoveRemover
+	dir  stream.DirRemover
 }
 
-func NewPostRunner() PostRunnerManager {
-	return PostRunnerManager{}
+func NewPostRunner(file stream.FileNewListMoveRemover, dir stream.DirRemover) PostRunnerManager {
+	return PostRunnerManager{file: file, dir: dir}
 }
 
-func (PostRunnerManager) PostRun(p formula.Setup, docker bool) error {
+func (po PostRunnerManager) PostRun(p formula.Setup, docker bool) error {
 	if docker {
-		if err := fileutil.RemoveFile(envFile); err != nil {
-			return err
-		}
-
-		if err := removeContainer(p.ContainerId); err != nil {
+		if err := po.file.Remove(".env"); err != nil {
 			return err
 		}
 	}
 
-	defer removeWorkDir(p.TmpDir)
+	defer po.removeWorkDir(p.TmpDir)
 
-	df, err := fileutil.ListNewFiles(p.BinPath, p.TmpBinDir)
+	df, err := po.file.ListNews(p.BinPath, p.TmpDir)
 	if err != nil {
 		return err
 	}
 
-	if err = fileutil.MoveFiles(p.TmpBinDir, p.Pwd, df); err != nil {
+	if err = po.file.Move(p.TmpDir, p.Pwd, df); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func removeWorkDir(tmpDir string) {
-	if err := fileutil.RemoveDir(tmpDir); err != nil {
+func (po PostRunnerManager) removeWorkDir(tmpDir string) {
+	tmpDir = filepath.Dir(tmpDir) // remove .rit/tmp
+	if err := po.dir.Remove(tmpDir); err != nil {
 		fmt.Sprintln("Error in remove dir")
 	}
-}
-
-func removeContainer(imgName string) error {
-	args := []string{dockerRemoveCmd, imgName}
-	cmd := exec.Command(docker, args...)
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	if err := cmd.Wait(); err != nil {
-		return err
-	}
-
-	return nil
 }

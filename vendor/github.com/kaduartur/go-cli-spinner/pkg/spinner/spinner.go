@@ -3,6 +3,7 @@ package spinner
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -25,6 +26,7 @@ type Spinner struct {
 	stopOnce  sync.Once
 	Output    io.Writer
 	NoTty     bool
+	timer     *time.Timer
 }
 
 // NewSpinner creates a Spinner with default template and FrameRate
@@ -34,6 +36,7 @@ func New(title string) *Spinner {
 		Template:  template.Default,
 		FrameRate: DefaultFrameRate,
 		runChan:   make(chan struct{}),
+		timer:     time.NewTimer(DefaultFrameRate),
 	}
 
 	var stdout interface{} = syscall.Stdout
@@ -54,7 +57,14 @@ func StartNew(title string) *Spinner {
 
 // Start starts the spinner execution
 func (s *Spinner) Start() *Spinner {
+	goos := runtime.GOOS
+	if goos == "windows" { // Show title without animation on Windows
+		fmt.Println(s.Title)
+		return s
+	}
+
 	go s.writer()
+
 	return s
 }
 
@@ -76,9 +86,11 @@ func (s *Spinner) SetTemplate(template template.Template) *Spinner {
 
 // Stop stops the spinner execution
 func (s *Spinner) Stop() {
-	// prevent multiple calls
 	s.stopOnce.Do(func() {
 		close(s.runChan)
+		if !s.timer.Stop() { // stop the timer when the spinner was stopped, preventing the next line from being cleared
+			<-s.timer.C
+		}
 		s.clearLine()
 	})
 }
@@ -105,7 +117,9 @@ func (s *Spinner) animate() {
 		case !s.NoTty:
 			fmt.Print(out)
 		}
-		time.Sleep(s.FrameRate)
+
+		s.timer.Reset(s.FrameRate)
+		<-s.timer.C // Wait for timer
 		s.clearLine()
 	}
 }

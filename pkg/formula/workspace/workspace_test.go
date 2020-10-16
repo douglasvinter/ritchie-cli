@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package workspace
 
 import (
@@ -5,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/ZupIT/ritchie-cli/pkg/file/fileutil"
@@ -14,8 +31,6 @@ import (
 
 func TestWorkspaceManager_Add(t *testing.T) {
 	cleanForm()
-	makefileDir := createDirWithMakefile()
-	treeDir := createDirWithTree()
 	fullDir := createFullDir()
 
 	tmpDir := os.TempDir()
@@ -69,28 +84,6 @@ func TestWorkspaceManager_Add(t *testing.T) {
 			out: ErrInvalidWorkspace,
 		},
 		{
-			name: "not found tree.json",
-			in: in{
-				workspace: formula.Workspace{
-					Name: "zup",
-					Dir:  makefileDir,
-				},
-				fileManager: fileManager,
-			},
-			out: ErrTreeJsonNotFound,
-		},
-		{
-			name: "not found MakefilePath",
-			in: in{
-				workspace: formula.Workspace{
-					Name: "zup",
-					Dir:  treeDir,
-				},
-				fileManager: fileManager,
-			},
-			out: ErrMakefileNotFound,
-		},
-		{
 			name: "read not found",
 			in: in{
 				workspace: formula.Workspace{
@@ -131,6 +124,83 @@ func TestWorkspaceManager_Add(t *testing.T) {
 
 			workspace := New(tmpDir, in.fileManager)
 			got := workspace.Add(in.workspace)
+
+			if got != nil && got.Error() != tt.out.Error() {
+				t.Errorf("Add(%s) got %v, out %v", tt.name, got, tt.out)
+			}
+		})
+	}
+}
+
+func TestManager_Delete(t *testing.T) {
+	cleanForm()
+	fullDir := createFullDir()
+
+	tmpDir := os.TempDir()
+	fileManager := stream.NewFileManager()
+
+	type in struct {
+		workspace   formula.Workspace
+		fileManager stream.FileWriteReadExister
+	}
+
+	tests := []struct {
+		name string
+		in   in
+		out  error
+	}{
+		{
+			name: "success delete",
+			in: in{
+				workspace: formula.Workspace{
+					Name: "zup",
+					Dir:  fullDir,
+				},
+				fileManager: fileManager,
+			},
+			out: nil,
+		},
+		{
+			name: "invalid workspace",
+			in: in{
+				workspace: formula.Workspace{
+					Name: "zup",
+					Dir:  "home/user/go/src/github.com/ZupIT/ritchie-formulas-commons",
+				},
+				fileManager: fileManager,
+			},
+			out: ErrInvalidWorkspace,
+		},
+		{
+			name: "read not found",
+			in: in{
+				workspace: formula.Workspace{
+					Name: "commons",
+					Dir:  fullDir,
+				},
+				fileManager: fileManagerMock{exist: true, readErr: errors.New("not found file")},
+			},
+			out: errors.New("not found file"),
+		},
+		{
+			name: "unmarshal error",
+			in: in{
+				workspace: formula.Workspace{
+					Name: "commons",
+					Dir:  fullDir,
+				},
+				fileManager: fileManagerMock{exist: true, read: []byte("error")},
+			},
+			out: errors.New("invalid character 'e' looking for beginning of value"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := tt.in
+
+			workspace := New(tmpDir, in.fileManager)
+			got := workspace.Delete(in.workspace)
 
 			if got != nil && got.Error() != tt.out.Error() {
 				t.Errorf("Add(%s) got %v, out %v", tt.name, got, tt.out)
@@ -230,8 +300,6 @@ func TestManager_List(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	cleanForm()
-	makefileDir := createDirWithMakefile()
-	treeDir := createDirWithTree()
 	fullDir := createFullDir()
 
 	tmpDir := os.TempDir()
@@ -273,28 +341,6 @@ func TestValidate(t *testing.T) {
 			},
 			out: ErrInvalidWorkspace,
 		},
-		{
-			name: "invalid Makefile not found",
-			in: in{
-				workspace: formula.Workspace{
-					Name: "zup",
-					Dir:  treeDir,
-				},
-				fileManager: fileManager,
-			},
-			out: ErrMakefileNotFound,
-		},
-		{
-			name: "invalid tree.json not found",
-			in: in{
-				workspace: formula.Workspace{
-					Name: "zup",
-					Dir:  makefileDir,
-				},
-				fileManager: fileManager,
-			},
-			out: ErrTreeJsonNotFound,
-		},
 	}
 
 	for _, tt := range tests {
@@ -313,39 +359,12 @@ func TestValidate(t *testing.T) {
 }
 
 func cleanForm() {
-	_ = fileutil.RemoveDir(os.TempDir() + "/customRepo")
-	_ = fileutil.RemoveDir(os.TempDir() + "/customRepoMakefile")
-	_ = fileutil.RemoveDir(os.TempDir() + "/customRepoTreejson")
-}
-
-func createDirWithMakefile() string {
-	dir := os.TempDir() + "/my-custom-repo-with-makefile"
-	_ = fileutil.CreateDirIfNotExists(dir, os.ModePerm)
-	makefilePath := path.Join(dir, formula.MakefilePath)
-	_ = fileutil.CreateFileIfNotExist(makefilePath, []byte(""))
-	return dir
-}
-
-func createDirWithTree() string {
-	dir := os.TempDir() + "/my-custom-repo-with-tree"
-	treeJsonFile := path.Join(dir, formula.TreePath)
-	treeJsonDir := path.Dir(treeJsonFile)
-	_ = fileutil.CreateDirIfNotExists(dir, os.ModePerm)
-	_ = fileutil.CreateDirIfNotExists(treeJsonDir, os.ModePerm)
-	_ = fileutil.CreateFileIfNotExist(treeJsonFile, []byte(""))
-	return dir
+	_ = fileutil.RemoveDir(filepath.Join(os.TempDir(), "my-custom-repo"))
 }
 
 func createFullDir() string {
-	dir := os.TempDir() + "/my-custom-repo"
-	treeJsonFile := path.Join(dir, formula.TreePath)
-	treeJsonDir := path.Dir(treeJsonFile)
-	makefilePath := path.Join(dir, formula.MakefilePath)
+	dir := filepath.Join(os.TempDir(), "my-custom-repo")
 	_ = fileutil.CreateDirIfNotExists(dir, os.ModePerm)
-	_ = fileutil.CreateDirIfNotExists(treeJsonDir, os.ModePerm)
-	makefile, _ := fileutil.ReadFile("../../testdata/MakefilePath")
-	_ = fileutil.CreateFileIfNotExist(makefilePath, makefile)
-	_ = fileutil.CreateFileIfNotExist(treeJsonFile, []byte("{}"))
 
 	return dir
 }

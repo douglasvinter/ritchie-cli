@@ -1,10 +1,30 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package formula
 
 import (
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/ZupIT/ritchie-cli/pkg/os/osutil"
 )
 
 var def Definition
@@ -13,13 +33,7 @@ var home string
 func TestMain(m *testing.M) {
 	home = os.TempDir()
 	def = Definition{
-		Path:     path.Join("scaffold", "coffee-java"),
-		Bin:      "coffee-java.sh",
-		LBin:     "coffee-java.sh",
-		MBin:     "coffee-java.sh",
-		WBin:     "coffee-java-${so}",
-		Bundle:   "commons.zip",
-		RepoURL:  "https://localhost:8080/formulas",
+		Path:     "scaffold/coffee-java",
 		RepoName: "commons",
 	}
 
@@ -27,7 +41,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestFormulaPath(t *testing.T) {
-	const want = "/tmp/formulas/scaffold/coffee-java"
+	want := filepath.Join(home, "repos", "commons", "scaffold", "coffee-java")
 	got := def.FormulaPath(home)
 
 	if want != got {
@@ -36,25 +50,16 @@ func TestFormulaPath(t *testing.T) {
 }
 
 func TestTmpWorkDirPath(t *testing.T) {
-	const hash = "e43c2b35-aa28-4833-b6d3-f1e89691fbd6"
-	wantTmpDir := fmt.Sprintf(TmpDirPattern, os.TempDir(),
-		"e43c2b35-aa28-4833-b6d3-f1e89691fbd6")
-	wantTmpBinDir := fmt.Sprintf(TmpBinDirPattern, os.TempDir(),
-		"e43c2b35-aa28-4833-b6d3-f1e89691fbd6", def.Path)
+	want := filepath.Join(home, TmpDir)
+	gotTmpDir := def.TmpWorkDirPath(home)
 
-	gotTmpDir, gotTmpBinDir := def.TmpWorkDirPath(home, hash)
-
-	if wantTmpDir != gotTmpDir {
-		t.Errorf("TmpWorkDirPath got tmp dir %v, want %v", gotTmpDir, wantTmpDir)
-	}
-
-	if wantTmpBinDir != gotTmpBinDir {
-		t.Errorf("TmpWorkDirPath got tmp bin dir %v, want %v", gotTmpBinDir, wantTmpBinDir)
+	if !strings.Contains(gotTmpDir, want) {
+		t.Errorf("TmpWorkDirPath got tmp dir %v, want some string that contains %v", gotTmpDir, want)
 	}
 }
 
 func TestBinPath(t *testing.T) {
-	const want = "/tmp/formulas/scaffold/coffee-java/bin"
+	want := filepath.Join(home, "repos", "commons", "scaffold", "coffee-java", "bin")
 	formulaPath := def.FormulaPath(home)
 	got := def.BinPath(formulaPath)
 
@@ -64,87 +69,33 @@ func TestBinPath(t *testing.T) {
 }
 
 func TestBinFilePath(t *testing.T) {
-	const want = "/tmp/formulas/scaffold/coffee-java/bin/coffee-java.sh"
+	os := runtime.GOOS
+	run := "run.sh"
+	if os == osutil.Windows {
+		run = "run.bat"
+	}
+	want := filepath.Join(home, "repos", "commons", "scaffold", "coffee-java", "bin", run)
+
 	formulaPath := def.FormulaPath(home)
-	binPath := def.BinPath(formulaPath)
-	got := def.BinFilePath(binPath, def.BinName())
+	got := def.BinFilePath(formulaPath)
 
 	if want != got {
 		t.Errorf("BinFilePath got %v, want %v", got, want)
 	}
 }
 
-func TestBundleURL(t *testing.T) {
-	const want = "https://localhost:8080/formulas/scaffold/coffee-java/commons.zip"
-	got := def.BundleURL()
-	if want != got {
-		t.Errorf("BundleURL got %v, want %v", got, want)
-	}
-}
-
-func TestConfigPath(t *testing.T) {
-	const want = "/tmp/formulas/scaffold/coffee-java/config.json"
-	formulaPath := def.FormulaPath(home)
-	configName := def.ConfigName()
-	got := def.ConfigPath(formulaPath, configName)
-
-	if want != got {
-		t.Errorf("ConfigPath got %v, want %v", got, want)
-	}
-}
-
-func TestConfigURL(t *testing.T) {
-	const want = "https://localhost:8080/formulas/scaffold/coffee-java/config.json"
-	configName := def.ConfigName()
-	got := def.ConfigURL(configName)
-
-	if want != got {
-		t.Errorf("ConfigURL got %v, want %v", got, want)
-	}
-}
-
-func TestConfigName(t *testing.T) {
-	tests := []struct {
-		name   string
-		config string
-		want   string
-	}{
-		{
-			name: "default config name",
-			want: "config.json",
-		},
-		{
-			name:   "definition config name",
-			config: "config-test.json",
-			want:   "config-test.json",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			def.Config = test.config
-			got := def.ConfigName()
-
-			if test.want != got {
-				t.Errorf("ConfigName got %v, want %v", got, test.want)
-			}
-		})
-	}
-}
-
-func TestFormulaName(t *testing.T) {
-	const want = "create_test"
+func TestFormulaCmdName(t *testing.T) {
+	const want = "create test"
 	create := Create{
 		FormulaCmd: "rit create test",
 	}
 
-	got := create.FormulaName()
+	got := create.FormulaCmdName()
 
 	if want != got {
 		t.Errorf("FormulaName got %v, want %v", got, want)
 	}
 }
-
 
 func TestPkgName(t *testing.T) {
 	const want = "test"
@@ -156,5 +107,15 @@ func TestPkgName(t *testing.T) {
 
 	if want != got {
 		t.Errorf("PkgName got %v, want %v", got, want)
+	}
+}
+
+func TestConfigPath(t *testing.T) {
+	want := filepath.Join(home, "repos", "commons", "scaffold", "coffee-java", "config.json")
+
+	got := def.ConfigPath(def.FormulaPath(home))
+
+	if want != got {
+		t.Errorf("TestConfigPath got %v, want %v", got, want)
 	}
 }

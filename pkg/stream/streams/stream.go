@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package streams
 
 import (
@@ -9,14 +25,19 @@ import (
 
 // Unzip wrapper for archive.zip
 func Unzip(src string, dest string) error {
-	reader, _ := zip.OpenReader(src)
+	reader, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+
+	defer reader.Close()
+
 	for _, file := range reader.Reader.File {
 
 		zippedFile, err := file.Open()
 		if err != nil {
 			return err
 		}
-		defer zippedFile.Close()
 
 		extractedFilePath := filepath.Join(
 			dest,
@@ -36,14 +57,14 @@ func Unzip(src string, dest string) error {
 			if err != nil {
 				return err
 			}
-			defer outputFile.Close()
 
 			_, err = io.Copy(outputFile, zippedFile)
 			if err != nil {
 				return err
 			}
+			outputFile.Close()
 		}
+		zippedFile.Close()
 	}
-	defer reader.Close()
 	return nil
 }

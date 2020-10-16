@@ -1,10 +1,29 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package watcher
 
 import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kaduartur/go-cli-spinner/pkg/spinner"
@@ -15,30 +34,56 @@ import (
 	"github.com/ZupIT/ritchie-cli/pkg/stream"
 )
 
+const stoppedText = "Press CTRL+C to stop"
+
 type WatchManager struct {
-	watcher *watcher.Watcher
-	formula formula.Builder
-	dir     stream.DirListChecker
+	watcher    *watcher.Watcher
+	formula    formula.LocalBuilder
+	dir        stream.DirListChecker
+	sendMetric func(commandExecutionTime float64, err ...string)
 }
 
-func New(formula formula.Builder, dir stream.DirListChecker) *WatchManager {
+func New(
+	formula formula.LocalBuilder,
+	dir stream.DirListChecker,
+	sendMetric func(commandExecutionTime float64, err ...string),
+) *WatchManager {
+
 	w := watcher.New()
 
-	return &WatchManager{watcher: w, formula: formula, dir: dir}
+	return &WatchManager{
+		watcher:    w,
+		formula:    formula,
+		dir:        dir,
+		sendMetric: sendMetric,
+	}
+}
+
+func (w *WatchManager) closeWatch() {
+	fmt.Println("\nStopping...")
+
+	w.watcher.Wait()
+	w.watcher.Close()
 }
 
 func (w *WatchManager) Watch(workspacePath, formulaPath string) {
 	w.watcher.FilterOps(watcher.Write)
+	sigs := make(chan os.Signal, 1)
+
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
 		for {
 			select {
 			case event := <-w.watcher.Event:
 				if !event.IsDir() && !strings.Contains(event.Path, "/dist") {
 					w.build(workspacePath, formulaPath)
-					prompt.Info("Waiting for changes...")
+					fmt.Println(prompt.Bold("Waiting for changes...") + "\n" + stoppedText + "\n")
 				}
 			case err := <-w.watcher.Error:
 				prompt.Error(err.Error())
+			case <-sigs:
+				w.closeWatch()
 			case <-w.watcher.Closed:
 				return
 			}
@@ -51,8 +96,8 @@ func (w *WatchManager) Watch(workspacePath, formulaPath string) {
 
 	w.build(workspacePath, formulaPath)
 
-	watchText := fmt.Sprintf("Watching dir %s \n", formulaPath)
-	prompt.Info(watchText)
+	watchText := fmt.Sprintf("Watching dir %s", formulaPath)
+	fmt.Println(prompt.Bold(watchText) + "\n" + stoppedText + "\n")
 
 	if err := w.watcher.Start(time.Second * 2); err != nil {
 		log.Fatalln(err)
@@ -70,7 +115,7 @@ func (w WatchManager) build(workspacePath, formulaPath string) {
 		return
 	}
 
-	success := prompt.Green("✔ Build completed!")
+	success := prompt.Green("Build completed!")
 	s.Success(success)
 	prompt.Info("Now you can run your formula with Ritchie!")
 }

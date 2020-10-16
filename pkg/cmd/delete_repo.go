@@ -1,110 +1,101 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cmd
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/ZupIT/ritchie-cli/pkg/formula"
-
-	"github.com/ZupIT/ritchie-cli/pkg/stdin"
-
 	"github.com/spf13/cobra"
 
+	"github.com/ZupIT/ritchie-cli/pkg/formula"
 	"github.com/ZupIT/ritchie-cli/pkg/prompt"
+	"github.com/ZupIT/ritchie-cli/pkg/stdin"
 )
 
-// deleteRepoCmd type for delete repo command
+const (
+	deleteSuccessMsg = "Repository %q was deleted with success"
+)
+
 type deleteRepoCmd struct {
-	repo formula.RepoDelLister
+	formula.RepositoryLister
 	prompt.InputList
-	prompt.InputBool
+	formula.RepositoryDeleter
 }
 
-// deleteRepo type for stdin json decoder
-type deleteRepo struct {
-	Name string `json:"name"`
-}
-
-// NewDeleteRepoCmd delete repository instance
-func NewDeleteRepoCmd(dl formula.RepoDelLister, il prompt.InputList, ib prompt.InputBool) *cobra.Command {
-	d := &deleteRepoCmd{
-		dl,
-		il,
-		ib,
-	}
-
+func NewDeleteRepoCmd(rl formula.RepositoryLister, il prompt.InputList, rd formula.RepositoryDeleter) *cobra.Command {
+	dr := deleteRepoCmd{rl, il, rd}
 	cmd := &cobra.Command{
-		Use:     "repo [NAME_REPOSITORY]",
-		Short:   "Delete a repository",
-		Example: "rit delete repo [NAME_REPOSITORY]",
-		RunE:    RunFuncE(d.runStdin(), d.runPrompt()),
+		Use:       "repo",
+		Short:     "Delete a repository",
+		Example:   "rit delete repo",
+		RunE:      RunFuncE(dr.runStdin(), dr.runFunc()),
+		ValidArgs: []string{""},
+		Args:      cobra.OnlyValidArgs,
 	}
-
-	cmd.LocalFlags()
-
 	return cmd
 }
-func rNameList(r []formula.Repository) []string {
-	var names []string
 
-	for _, repo := range r {
-		names = append(names, repo.Name)
-	}
-
-	return names
-}
-
-func (d deleteRepoCmd) runPrompt() CommandRunnerFunc {
+func (dr deleteRepoCmd) runFunc() CommandRunnerFunc {
 	return func(cmd *cobra.Command, args []string) error {
-
-		repos, err := d.repo.List()
+		repos, err := dr.RepositoryLister.List()
 		if err != nil {
 			return err
 		}
 
 		if len(repos) == 0 {
-			prompt.Error("You dont have any repository to delete")
+			prompt.Warning("You don't have any repositories")
 			return nil
 		}
 
-		options := rNameList(repos)
+		var reposNames []string
+		for _, r := range repos {
+			reposNames = append(reposNames, r.Name.String())
+		}
 
-		rn, err := d.List("Choose a repository to delete:", options)
+		repo, err := dr.InputList.List("Repository:", reposNames)
 		if err != nil {
 			return err
 		}
 
-		choice, _ := d.Bool(fmt.Sprintf("Want to delete %s?", rn), []string{"yes", "no"})
-		if !choice {
-			fmt.Println("Operation cancelled")
-			return nil
-		}
-
-		if err = d.repo.Delete(rn); err != nil {
+		if err = dr.Delete(formula.RepoName(repo)); err != nil {
 			return err
 		}
 
-		prompt.Info(fmt.Sprintf("%q has been removed from your repositories\n", rn))
+		prompt.Success(fmt.Sprintf(deleteSuccessMsg, repo))
 		return nil
 	}
 }
 
-func (d deleteRepoCmd) runStdin() CommandRunnerFunc {
+func (dr deleteRepoCmd) runStdin() CommandRunnerFunc {
 	return func(cmd *cobra.Command, args []string) error {
 
-		dr := deleteRepo{}
+		repo := formula.Repo{}
 
-		err := stdin.ReadJson(os.Stdin, &dr)
+		err := stdin.ReadJson(os.Stdin, &repo)
 		if err != nil {
-			prompt.Error(stdin.MsgInvalidInput)
 			return err
 		}
 
-		if err = d.repo.Delete(dr.Name); err != nil {
+		if err := dr.Delete(repo.Name); err != nil {
 			return err
 		}
 
-		prompt.Info(fmt.Sprintf("%q has been removed from your repositories\n", dr.Name))
+		prompt.Success(fmt.Sprintf(deleteSuccessMsg, repo.Name))
 		return nil
 	}
 }

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package functional
 
 import (
@@ -15,6 +31,7 @@ import (
 
 const (
 	rit     = "rit"
+	windows = runtime.GOOS == "windows"
 	// initCmd = "init"
 )
 
@@ -33,8 +50,7 @@ type Scenario struct {
 func (scenario *Scenario) RunSteps() (string, error) {
 	fmt.Println("Running: " + scenario.Entry)
 
-	os := runtime.GOOS
-	if  os == "windows" && len(scenario.Steps) >= 2 {
+	if windows && len(scenario.Steps) >= 2 {
 		ginkgo.Skip("Scenarios with multi steps for windows doesnt work")
 		return "", nil
 	} else {
@@ -45,8 +61,7 @@ func (scenario *Scenario) RunSteps() (string, error) {
 
 func (scenario *Scenario) RunStdin() (string, error) {
 	fmt.Println("Running STDIN: " + scenario.Entry)
-	os := runtime.GOOS
-	if  os == "windows" {
+	if windows {
 		b2, err := scenario.runStdinForWindows()
 		return b2.String(), err
 	} else {
@@ -57,8 +72,7 @@ func (scenario *Scenario) RunStdin() (string, error) {
 }
 
 func RitSingleInit() {
-	os := runtime.GOOS
-	if  os == "windows" {
+	if windows {
 		setUpRitSingleWin()
 	} else {
 		setUpRitSingleUnix()
@@ -66,19 +80,8 @@ func RitSingleInit() {
 	fmt.Println("Setup Done..")
 }
 
-func RitTeamInit() {
-	os := runtime.GOOS
-	if  os == "windows" {
-		// TODO setup Windows for TEAM
-	} else {
-		setUpRitTeamUnix()
-	}
-	fmt.Println("Setup Done..")
-}
-
 func RitClearConfigs() {
-	os := runtime.GOOS
-	if  os == "windows" {
+	if windows {
 		setUpClearSetupWindows()
 	} else {
 		setUpClearSetupUnix()
@@ -110,4 +113,3 @@ func scannerTerminal(out io.Reader) *bufio.Scanner {
 	scanner.Split(bufio.ScanLines)
 	return scanner
 }
-

@@ -1,234 +1,356 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"strings"
+	"time"
 
-	"github.com/ZupIT/ritchie-cli/pkg/formula"
-	"github.com/ZupIT/ritchie-cli/pkg/security/otp"
+	"github.com/ZupIT/ritchie-cli/pkg/git"
+	"github.com/ZupIT/ritchie-cli/pkg/git/github"
+	"github.com/ZupIT/ritchie-cli/pkg/metric"
+	"github.com/ZupIT/ritchie-cli/pkg/stdin"
+	"github.com/ZupIT/ritchie-cli/pkg/stream"
+
+	"github.com/kaduartur/go-cli-spinner/pkg/spinner"
 
 	"github.com/spf13/cobra"
 
+	"github.com/ZupIT/ritchie-cli/pkg/formula"
 	"github.com/ZupIT/ritchie-cli/pkg/prompt"
-	"github.com/ZupIT/ritchie-cli/pkg/security"
-	"github.com/ZupIT/ritchie-cli/pkg/server"
-	"github.com/ZupIT/ritchie-cli/pkg/stdin"
-	"github.com/ZupIT/ritchie-cli/pkg/validator"
+	"github.com/ZupIT/ritchie-cli/pkg/rtutorial"
 )
 
 const (
-	MsgPhrase                    = "Define a passphrase for your machine: "
-	MsgOrganization              = "Enter your organization: "
-	msgOrganizationAlreadyExists = "The organization (%s) already exists. Do you like to override?"
-	MsgServerURL                 = "URL of the server [http(s)://host]: "
-	msgServerURLAlreadyExists    = "The server URL(%s) already exists. Do you like to override?"
-	MsgLogin                     = "You can perform login to your organization now, or later using [rit login] command. Perform now?"
+	addRepoMsg         = "Run \"rit add repo\" to add a new repository manually."
+	AddCommonsQuestion = "Would you like to add the community repository? [https://github.com/ZupIT/ritchie-formulas]"
+	AddMetricsQuestion = `To help us improve and deliver more value to the community,
+do you agree to let us collect anonymous data about product
+and feature use statistics and crash reports?`
+	AcceptMetrics             = "Yes, I agree to contribute with data anonymously"
+	DoNotAcceptMetrics        = "No, not for now."
+	SelectFormulaTypeQuestion = "Select a default formula run type:"
+	FormulaLocalRunWarning    = `
+In order to run formulas locally, you must have the formula language installed on your machine,
+if you don't want to install choose to run the formulas inside the docker.
+`
+	addRepoInfo = "\n" + `You can keep the configuration without adding the community repository,
+ but you will need to provide a git repo with the formulas templates and add them with
+ rit add repo command, naming this repository obligatorily as "commons".
+
+ See how to do this on the example: [https://github.com/ZupIT/ritchie-formulas/blob/master/templates/create_formula/README.md]` + "\n"
+	CommonsRepoURL = "https://github.com/ZupIT/ritchie-formulas"
 )
 
-type initSingleCmd struct {
-	prompt.InputPassword
-	security.PassphraseManager
-	formula.RepoLoader
+var (
+	errMsg             = prompt.Yellow("It was not possible to add the commons repository at this time, please try again later.")
+	ErrInitCommonsRepo = errors.New(errMsg)
+	ErrInvalidRunType  = fmt.Errorf("invalid formula run type, these run types are enabled [%v]", strings.Join(formula.RunnerTypes, ", "))
+)
+
+type initStdin struct {
+	AddCommons  bool   `json:"addCommons"`
+	SendMetrics bool   `json:"sendMetrics"`
+	RunType     string `json:"runType"`
 }
 
-type initTeamCmd struct {
-	prompt.InputText
-	prompt.InputPassword
-	prompt.InputURL
+type initCmd struct {
+	repo     formula.RepositoryAdder
+	git      git.Repositories
+	tutorial rtutorial.Finder
+	config   formula.ConfigRunner
+	file     stream.FileWriteReadExister
+	prompt.InputList
 	prompt.InputBool
-	server.FindSetter
-	security.LoginManager
-	formula.RepoLoader
-	otp.Resolver
+	metricSender metric.SendManagerHttp
 }
 
-// NewSingleInitCmd creates init command for single edition
-func NewSingleInitCmd(
-	ip prompt.InputPassword,
-	pm security.PassphraseManager,
-	rl formula.RepoLoader) *cobra.Command {
-
-	o := initSingleCmd{ip, pm, rl}
-
-	return newInitCmd(o.runStdin(), o.runPrompt())
-}
-
-// NewTeamInitCmd creates init command for team edition
-func NewTeamInitCmd(
-	it prompt.InputText,
-	ip prompt.InputPassword,
-	iu prompt.InputURL,
-	ib prompt.InputBool,
-	fs server.FindSetter,
-	lm security.LoginManager,
-	rl formula.RepoLoader,
-	orv otp.Resolver) *cobra.Command {
-
-	o := initTeamCmd{it, ip, iu, ib, fs, lm, rl, orv}
-
-	return newInitCmd(o.runStdin(), o.runPrompt())
-}
-
-func newInitCmd(stdinFunc, promptFunc CommandRunnerFunc) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize rit configuration",
-		Long:  "Initialize rit configuration",
-		RunE:  RunFuncE(stdinFunc, promptFunc),
+func NewInitCmd(
+	repo formula.RepositoryAdder,
+	git git.Repositories,
+	tutorial rtutorial.Finder,
+	config formula.ConfigRunner,
+	file stream.FileWriteReadExister,
+	inList prompt.InputList,
+	inBool prompt.InputBool,
+	metricSender metric.SendManagerHttp,
+) *cobra.Command {
+	o := initCmd{
+		repo:         repo,
+		git:          git,
+		tutorial:     tutorial,
+		config:       config,
+		file:         file,
+		InputList:    inList,
+		InputBool:    inBool,
+		metricSender: metricSender,
 	}
-	cmd.LocalFlags()
+
+	cmd := &cobra.Command{
+		Use:       "init",
+		Short:     "Initialize rit configuration",
+		Long:      "Initialize rit configuration",
+		RunE:      RunFuncE(o.runStdin(), o.runPrompt()),
+		ValidArgs: []string{""},
+		Args:      cobra.OnlyValidArgs,
+	}
+
 	return cmd
 }
 
-func (o initSingleCmd) runPrompt() CommandRunnerFunc {
+func (in initCmd) runPrompt() CommandRunnerFunc {
 	return func(cmd *cobra.Command, args []string) error {
-		pass, err := o.Password(MsgPhrase)
-		if err != nil {
+		if err := in.metricsAuthorization(); err != nil {
 			return err
 		}
 
-		p := security.Passphrase(pass)
-		if err := o.Save(p); err != nil {
+		if err := in.addCommonsRepo(); err != nil {
 			return err
 		}
 
-		return o.Load()
-	}
-}
-
-func (o initSingleCmd) runStdin() CommandRunnerFunc {
-	return func(cmd *cobra.Command, args []string) error {
-
-		obj := struct {
-			Passphrase string `json:"passphrase"`
-		}{}
-
-		err := stdin.ReadJson(os.Stdin, &obj)
-		if err != nil {
-			fmt.Println(stdin.MsgInvalidInput)
+		if err := in.setRunnerType(); err != nil {
 			return err
 		}
 
-		p := security.Passphrase(obj.Passphrase)
-		if err := o.Save(p); err != nil {
+		prompt.Success("\nInitialization successful!\n")
+
+		if err := in.tutorialInit(); err != nil {
 			return err
-		}
-
-		return o.Load()
-	}
-}
-
-func (o initTeamCmd) runPrompt() CommandRunnerFunc {
-	return func(cmd *cobra.Command, args []string) error {
-		cfg, err := o.Find()
-		if err != nil {
-			return err
-		}
-
-		if cfg.Organization != "" && len(cfg.Organization) > 0 {
-			m := fmt.Sprintf(msgOrganizationAlreadyExists, cfg.Organization)
-			y, err := o.Bool(m, []string{"no", "yes"})
-			if err != nil {
-				return err
-			}
-			if y {
-				org, err := o.Text(MsgOrganization, true)
-				if err != nil {
-					return err
-				}
-				cfg.Organization = org
-			}
-		} else {
-			org, err := o.Text(MsgOrganization, true)
-			if err != nil {
-				return err
-			}
-			cfg.Organization = org
-		}
-
-		if err := validator.IsValidURL(cfg.URL); err != nil {
-			u, err := o.URL(MsgServerURL, "")
-			if err != nil {
-				return err
-			}
-			cfg.URL = u
-		} else {
-			m := fmt.Sprintf(msgServerURLAlreadyExists, cfg.URL)
-			y, err := o.Bool(m, []string{"no", "yes"})
-			if err != nil {
-				return err
-			}
-			if y {
-				u, err := o.URL(MsgServerURL, "")
-				if err != nil {
-					return err
-				}
-				cfg.URL = u
-			}
-		}
-
-		if err := o.Set(&cfg); err != nil {
-			return err
-		}
-
-		y, err := o.Bool(MsgLogin, []string{"no", "yes"})
-		if err != nil {
-			return err
-		}
-		if y {
-			u, err := o.Text(MsgUsername, true)
-			if err != nil {
-				return err
-			}
-			p, err := o.Password(MsgPassword)
-			if err != nil {
-				return err
-			}
-
-			otpResponse, err := o.RequestOtp(cfg.URL, cfg.Organization)
-			if err != nil {
-				return err
-			}
-			var totp string
-			if otpResponse.Otp {
-				totp, err = o.Text(MsgOtp, true)
-				if err != nil {
-					return err
-				}
-			}
-
-			us := security.User{
-				Username: u,
-				Password: p,
-				Totp:     totp,
-			}
-			if err := o.Login(us); err != nil {
-				return err
-			}
-			if err := o.Load(); err != nil {
-				return err
-			}
-			fmt.Println("Login successfully!")
 		}
 
 		return nil
 	}
 }
 
-func (o initTeamCmd) runStdin() CommandRunnerFunc {
+func (in initCmd) runStdin() CommandRunnerFunc {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg := server.Config{}
+		init := initStdin{}
 
-		err := stdin.ReadJson(os.Stdin, &cfg)
+		err := stdin.ReadJson(cmd.InOrStdin(), &init)
 		if err != nil {
-			prompt.Error(stdin.MsgInvalidInput)
 			return err
 		}
 
-		if err := o.Set(&cfg); err != nil {
+		sendMetrics := "no"
+		if init.SendMetrics {
+			sendMetrics = "yes"
+		}
+
+		if err = in.file.Write(metric.FilePath, []byte(sendMetrics)); err != nil {
+			return err
+		}
+
+		if !init.AddCommons {
+			prompt.Warning(addRepoInfo)
+			fmt.Println(addRepoMsg)
+		} else {
+			repo := formula.Repo{
+				Provider: "Github",
+				Name:     "commons",
+				Url:      CommonsRepoURL,
+				Priority: 0,
+			}
+
+			s := spinner.StartNew("Adding the commons repository...")
+			time.Sleep(time.Second * 2)
+
+			repoInfo := github.NewRepoInfo(repo.Url, repo.Token)
+
+			tag, err := in.git.LatestTag(repoInfo)
+			if err != nil {
+				s.Error(ErrInitCommonsRepo)
+				fmt.Println(addRepoMsg)
+			}
+
+			repo.Version = formula.RepoVersion(tag.Name)
+
+			if err := in.repo.Add(repo); err != nil {
+				s.Error(ErrInitCommonsRepo)
+				fmt.Println(addRepoMsg)
+				return nil
+			}
+
+			s.Success(prompt.Green("Commons repository added successfully!\n"))
+		}
+
+		runType := formula.DefaultRun
+		for i := range formula.RunnerTypes {
+			if formula.RunnerTypes[i] == init.RunType {
+				runType = formula.RunnerType(i)
+				break
+			}
+		}
+
+		if runType == formula.DefaultRun {
+			return ErrInvalidRunType
+		}
+
+		if err := in.config.Create(runType); err != nil {
+			return err
+		}
+
+		if runType == formula.LocalRun {
+			prompt.Warning(FormulaLocalRunWarning)
+		}
+
+		prompt.Success("Initialization successful!")
+
+		if err := in.tutorialInit(); err != nil {
 			return err
 		}
 
 		return nil
 	}
+}
+
+func (in initCmd) metricsAuthorization() error {
+	const welcome = "Welcome to Ritchie!\n"
+	const header = `Ritchie is a platform that helps you and your team to save time by
+giving you the power to create powerful templates to execute important
+tasks across your team and organization with minimum time and with standards,
+delivering autonomy to developers with security.
+
+You can view our Privacy Policy (http://insights.zup.com.br/politica-privacidade) to better understand our commitment.
+`
+	const footer = "\nYou can always modify your choice using the \"rit metrics\" command.\n"
+	options := []string{AcceptMetrics, DoNotAcceptMetrics}
+
+	prompt.Info(welcome)
+	fmt.Println(header)
+
+	choose, err := in.InputList.List(AddMetricsQuestion, options)
+	if err != nil {
+		return err
+	}
+	fmt.Println(footer)
+
+	responseToWrite := "yes"
+	if choose == DoNotAcceptMetrics {
+		responseToWrite = "no"
+		in.metricSender.Send(metric.APIData{
+			Id:        "rit_init",
+			Timestamp: time.Now(),
+			Data: metric.Data{
+				MetricsAcceptance: responseToWrite,
+			},
+		})
+	}
+
+	if err = in.file.Write(metric.FilePath, []byte(responseToWrite)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (in initCmd) setRunnerType() error {
+	selected, err := in.List(SelectFormulaTypeQuestion, formula.RunnerTypes)
+	if err != nil {
+		return err
+	}
+
+	runType := formula.DefaultRun
+	for i := range formula.RunnerTypes {
+		if formula.RunnerTypes[i] == selected {
+			runType = formula.RunnerType(i)
+			break
+		}
+	}
+
+	if runType == formula.DefaultRun {
+		return ErrInvalidRunType
+	}
+
+	if err := in.config.Create(runType); err != nil {
+		return err
+	}
+
+	if runType == formula.LocalRun {
+		prompt.Warning(FormulaLocalRunWarning)
+	}
+
+	return nil
+}
+
+func (in initCmd) addCommonsRepo() error {
+	choose, err := in.Bool(AddCommonsQuestion, []string{"yes", "no"})
+	if err != nil {
+		return err
+	}
+	metric.CommonsRepoAdded = "yes"
+	if !choose {
+		prompt.Warning(addRepoInfo)
+		fmt.Println(addRepoMsg)
+		metric.CommonsRepoAdded = "no"
+		return nil
+	}
+
+	repo := formula.Repo{
+		Provider: "Github",
+		Name:     "commons",
+		Url:      CommonsRepoURL,
+		Priority: 0,
+	}
+
+	s := spinner.StartNew("Adding the commons repository...")
+	time.Sleep(time.Second * 2)
+
+	repoInfo := github.NewRepoInfo(repo.Url, repo.Token)
+
+	tag, err := in.git.LatestTag(repoInfo)
+	if err != nil {
+		s.Error(ErrInitCommonsRepo)
+		fmt.Println(addRepoMsg)
+		return nil
+	}
+
+	repo.Version = formula.RepoVersion(tag.Name)
+
+	if err := in.repo.Add(repo); err != nil {
+		s.Error(ErrInitCommonsRepo)
+		fmt.Println(addRepoMsg)
+		return nil
+	}
+
+	s.Success(prompt.Green("Commons repository added successfully!\n"))
+
+	return nil
+}
+
+func (in initCmd) tutorialInit() error {
+	tutorialHolder, err := in.tutorial.Find()
+	if err != nil {
+		return err
+	}
+
+	const tagTutorial = "\n[TUTORIAL]"
+	const MessageTitle = "How to create new formulas:"
+	const MessageBody = ` ∙ Run "rit create formula"
+ ∙ Open the project with your favorite text editor.` + "\n"
+	const MessageCommons = "Take a look at the formulas you can run and test to see what you can with Ritchie using \"rit\"\n"
+
+	if tutorialHolder.Current == tutorialStatusEnabled {
+		prompt.Info(tagTutorial)
+		prompt.Info(MessageTitle)
+		fmt.Println(MessageBody)
+		prompt.Info(MessageCommons)
+	}
+
+	return nil
 }

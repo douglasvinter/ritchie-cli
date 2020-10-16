@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cmd
 
 import (
@@ -7,99 +23,61 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ZupIT/ritchie-cli/pkg/api"
 	"github.com/ZupIT/ritchie-cli/pkg/credential"
-	"github.com/ZupIT/ritchie-cli/pkg/credential/credsingle"
 	"github.com/ZupIT/ritchie-cli/pkg/prompt"
 	"github.com/ZupIT/ritchie-cli/pkg/stdin"
 	"github.com/ZupIT/ritchie-cli/pkg/stream"
 )
 
-const (
-	fileInputType    = "file"
-	promptInputType  = "prompt"
-	msgTypeEntryPath = "Type the path to your file that contains the value of your credential: "
-)
-
 var inputTypes = []string{"plain text", "secret"}
-var inputTypeList = []string{fileInputType, promptInputType}
+var inputWay = []string{"type", "file"}
 
 // setCredentialCmd type for set credential command
 type setCredentialCmd struct {
 	credential.Setter
-	credential.Settings
-	credential.SingleSettings
-	edition api.Edition
+	credential.ReaderWriterPather
+	stream.FileReadExister
 	prompt.InputText
 	prompt.InputBool
 	prompt.InputList
 	prompt.InputPassword
-	prompt.InputMultiline
-	stream.FileReadExister
 }
 
-// NewSingleSetCredentialCmd creates a new cmd instance
-func NewSingleSetCredentialCmd(
-	st credential.Setter,
-	ss credential.SingleSettings,
-	it prompt.InputText,
-	ib prompt.InputBool,
-	il prompt.InputList,
-	ip prompt.InputPassword,
-	fr stream.FileReadExister) *cobra.Command {
+// NewSetCredentialCmd creates a new cmd instance
+func NewSetCredentialCmd(
+	credSetter credential.Setter,
+	credFile credential.ReaderWriterPather,
+	file stream.FileReadExister,
+	inText prompt.InputText,
+	inBool prompt.InputBool,
+	inList prompt.InputList,
+	inPass prompt.InputPassword,
+) *cobra.Command {
 	s := &setCredentialCmd{
-		st,
-		nil,
-		ss,
-		api.Single,
-		it,
-		ib,
-		il,
-		ip,
-		nil,
-		fr}
-	return newCmd(s)
-}
-
-// NewTeamSetCredentialCmd creates a new cmd instance
-func NewTeamSetCredentialCmd(
-	st credential.Setter,
-	si credential.Settings,
-	it prompt.InputText,
-	ib prompt.InputBool,
-	il prompt.InputList,
-	ip prompt.InputPassword,
-	im prompt.InputMultiline) *cobra.Command {
-	s := &setCredentialCmd{
-		st,
-		si,
-		nil,
-		api.Team,
-		it,
-		ib,
-		il,
-		ip,
-		im,
-		nil}
-	return newCmd(s)
-}
-
-func newCmd(s *setCredentialCmd) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "credential",
-		Short: "Set credential",
-		Long:  `Set credentials for Github, Gitlab, AWS, UserPass, etc.`,
-		RunE:  RunFuncE(s.runStdin(), s.runPrompt()),
+		Setter:             credSetter,
+		ReaderWriterPather: credFile,
+		FileReadExister:    file,
+		InputText:          inText,
+		InputBool:          inBool,
+		InputList:          inList,
+		InputPassword:      inPass,
 	}
 
+	cmd := &cobra.Command{
+		Use:       "credential",
+		Short:     "Set credential",
+		Long:      `Set credentials for Github, Gitlab, AWS, UserPass, etc.`,
+		RunE:      RunFuncE(s.runStdin(), s.runPrompt()),
+		ValidArgs: []string{""},
+		Args:      cobra.OnlyValidArgs,
+	}
 	cmd.LocalFlags()
-
 	return cmd
 }
 
 func (s setCredentialCmd) runPrompt() CommandRunnerFunc {
 	return func(cmd *cobra.Command, args []string) error {
-		cred, err := s.promptResolver()
+		cred, err := s.prompt()
 		if err != nil {
 			return err
 		}
@@ -107,49 +85,37 @@ func (s setCredentialCmd) runPrompt() CommandRunnerFunc {
 		if err := s.Set(cred); err != nil {
 			return err
 		}
+		prompt.Success(fmt.Sprintf("%s credential saved!", strings.Title(cred.Service)))
+		prompt.Info("Check your credentials using rit list credential")
 
-		prompt.Success(fmt.Sprintf("✔ %s credential saved!", strings.Title(cred.Service)))
 		return nil
 	}
 }
 
-func (s setCredentialCmd) promptResolver() (credential.Detail, error) {
-	switch s.edition {
-	case api.Single:
-		return s.singlePrompt()
-	case api.Team:
-		return s.teamPrompt()
-	default:
-		return credential.Detail{}, prompt.NewError("invalid CLI build, no edition defined")
-	}
-}
-
-func (s setCredentialCmd) singlePrompt() (credential.Detail, error) {
-	err := s.WriteDefaultCredentials(credsingle.ProviderPath())
-	if err != nil {
+func (s setCredentialCmd) prompt() (credential.Detail, error) {
+	if err := s.WriteDefaultCredentialsFields(s.ProviderPath()); err != nil {
 		return credential.Detail{}, err
 	}
 
 	var credDetail credential.Detail
 	cred := credential.Credential{}
 
-	credentials, err := s.ReadCredentials(credsingle.ProviderPath())
+	credentials, err := s.ReadCredentialsFields(s.ProviderPath())
 	if err != nil {
 		return credential.Detail{}, err
 	}
 
-	providerArr := credsingle.NewProviderArr(credentials)
+	providerArr := credential.NewProviderArr(credentials)
 	providerChoose, err := s.List("Select your provider", providerArr)
 	if err != nil {
 		return credDetail, err
 	}
 
-	if providerChoose == credsingle.AddNew {
+	if providerChoose == credential.AddNew {
 		newProvider, err := s.Text("Define your provider name:", true)
 		if err != nil {
 			return credDetail, err
 		}
-		providerArr = append(providerArr, newProvider)
 
 		var newFields []credential.Field
 		var newField credential.Field
@@ -172,8 +138,7 @@ func (s setCredentialCmd) singlePrompt() (credential.Detail, error) {
 			}
 		}
 		credentials[newProvider] = newFields
-		err = s.WriteCredentials(credentials, credsingle.ProviderPath())
-		if err != nil {
+		if err = s.WriteCredentialsFields(credentials, s.ProviderPath()); err != nil {
 			return credDetail, err
 		}
 
@@ -182,28 +147,37 @@ func (s setCredentialCmd) singlePrompt() (credential.Detail, error) {
 
 	inputs := credentials[providerChoose]
 
+	inputWayChoose, _ := s.List("Want to enter your credential typing or through a file?", inputWay)
 	for _, i := range inputs {
-
-		inputType, err := s.List(fmt.Sprintf("Select the input type for the %q field:", i.Name), inputTypeList)
-		if err != nil {
-			return credDetail, err
-		}
-
-		if inputType == fileInputType {
-			value, err := s.inputFile()
+		var value string
+		if inputWayChoose == inputWay[1] {
+			path, err := s.Text("Enter the credential file path for "+prompt.Cyan(i.Name)+":", true)
 			if err != nil {
-				return credDetail, err
+				return credential.Detail{}, err
 			}
-			cred[i.Name] = value
+
+			if !s.FileReadExister.Exists(path) {
+				return credDetail, prompt.NewError("Cannot find any credential file at " + path)
+			}
+
+			byteValue, err := s.FileReadExister.Read(path)
+			if err != nil {
+				return credential.Detail{}, err
+			}
+			if len(byteValue) == 0 {
+				return credential.Detail{}, prompt.NewError("Empty credential file!")
+			}
+
+			cred[i.Name] = string(byteValue)
+
 		} else {
-			var value string
 			if i.Type == inputTypes[1] {
 				value, err = s.Password(i.Name + ":")
 				if err != nil {
 					return credDetail, err
 				}
 			} else {
-				value, err = s.Text(i.Name + ":", true)
+				value, err = s.Text(i.Name+":", true)
 				if err != nil {
 					return credDetail, err
 				}
@@ -213,66 +187,6 @@ func (s setCredentialCmd) singlePrompt() (credential.Detail, error) {
 	}
 	credDetail.Service = providerChoose
 	credDetail.Credential = cred
-
-	return credDetail, nil
-}
-
-func (s setCredentialCmd) inputFile() (string, error) {
-	path, err := s.Text(msgTypeEntryPath, true)
-	if err != nil {
-		return "", err
-	}
-
-	value, err := s.FileReadExister.Read(path)
-	if err != nil {
-		return "", err
-	}
-
-	return string(value), nil
-}
-
-func (s setCredentialCmd) teamPrompt() (credential.Detail, error) {
-	var credDetail credential.Detail
-
-	cfg, err := s.Fields()
-	if err != nil {
-		return credDetail, err
-	}
-
-	providers := make([]string, 0, len(cfg))
-	for k := range cfg {
-		providers = append(providers, k)
-	}
-
-	if err := s.profile(&credDetail); err != nil {
-		return credDetail, err
-	}
-
-	service, err := s.List("Provider: ", providers)
-	if err != nil {
-		return credDetail, err
-	}
-
-	credentials := make(map[string]string)
-	fields := cfg[service]
-	for _, f := range fields {
-		var val string
-		var err error
-		field := strings.ToLower(f.Name)
-		lab := fmt.Sprintf("%s %s: ", strings.Title(service), f.Name)
-		if f.Type == prompt.PasswordType {
-			val, err = s.Password(lab)
-		} else {
-			val, err = s.Text(lab, true)
-		}
-		if err != nil {
-			return credDetail, err
-		}
-		credentials[field] = val
-	}
-
-	credDetail.Credential = credentials
-	credDetail.Service = service
 
 	return credDetail, nil
 }
@@ -288,7 +202,8 @@ func (s setCredentialCmd) runStdin() CommandRunnerFunc {
 			return err
 		}
 
-		prompt.Success(fmt.Sprintf("✔ %s credential saved!", strings.Title(cred.Service)))
+		prompt.Success(fmt.Sprintf("%s credential saved!", strings.Title(cred.Service)))
+		prompt.Info("Check your credentials using rit list credential")
 		return nil
 	}
 }
@@ -296,43 +211,8 @@ func (s setCredentialCmd) runStdin() CommandRunnerFunc {
 func (s setCredentialCmd) stdinResolver() (credential.Detail, error) {
 	var credDetail credential.Detail
 
-	if s.edition == api.Single || s.edition == api.Team {
-
-		err := stdin.ReadJson(os.Stdin, &credDetail)
-		if err != nil {
-			prompt.Error(stdin.MsgInvalidInput)
-			return credDetail, err
-		}
-
-		return credDetail, nil
+	if err := stdin.ReadJson(os.Stdin, &credDetail); err != nil {
+		return credDetail, err
 	}
-
-	return credDetail, prompt.NewError("invalid CLI build, no edition defined")
-}
-
-func (s setCredentialCmd) profile(credDetail *credential.Detail) error {
-	profiles := map[string]credential.Type{
-		"ME (for you)":               credential.Me,
-		"OTHER (for another user)":   credential.Other,
-		"ORG (for the organization)": credential.Org,
-	}
-	var types []string
-	for k := range profiles {
-		types = append(types, k)
-	}
-
-	typ, err := s.List("Profile to add credential: ", types)
-	if err != nil {
-		return err
-	}
-
-	if profiles[typ] == credential.Other {
-		credDetail.Username, err = s.Text("Username: ", true)
-		if err != nil {
-			return err
-		}
-	}
-
-	credDetail.Type = profiles[typ]
-	return nil
+	return credDetail, nil
 }

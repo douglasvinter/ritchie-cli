@@ -1,23 +1,44 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cmd
 
 import (
+	"errors"
+	"io"
+
 	"github.com/ZupIT/ritchie-cli/pkg/api"
+	"github.com/ZupIT/ritchie-cli/pkg/git"
+
+	"github.com/spf13/cobra"
+
 	"github.com/ZupIT/ritchie-cli/pkg/autocomplete"
 	"github.com/ZupIT/ritchie-cli/pkg/credential"
 	"github.com/ZupIT/ritchie-cli/pkg/formula"
 	"github.com/ZupIT/ritchie-cli/pkg/rcontext"
-	"github.com/ZupIT/ritchie-cli/pkg/security"
-	"github.com/ZupIT/ritchie-cli/pkg/security/otp"
-	"github.com/ZupIT/ritchie-cli/pkg/server"
-
-	"errors"
-
-	"github.com/spf13/cobra"
+	"github.com/ZupIT/ritchie-cli/pkg/rtutorial"
 )
 
 type inputTextMock struct{}
 
 func (inputTextMock) Text(name string, required bool, helper ...string) (string, error) {
+	return "mocked text", nil
+}
+
+func (inputTextMock) TextWithValidate(name string, validate func(interface{}) error, helper ...string) (string, error) {
 	return "mocked text", nil
 }
 
@@ -27,10 +48,39 @@ func (inputTextValidatorMock) Text(name string, validate func(interface{}) error
 	return "mocked text", nil
 }
 
+type inputTextValidatorErrorMock struct{}
+
+func (inputTextValidatorErrorMock) Text(name string, validate func(interface{}) error, helper ...string) (string, error) {
+	return "mocked text", errors.New("error on input text")
+}
+
+type inputTextErrorMock struct{}
+
+func (inputTextErrorMock) Text(name string, required bool, helper ...string) (string, error) {
+	return "", errors.New("error on input text")
+}
+
+type inputTextCustomMock struct {
+	text             func(name string, required bool) (string, error)
+	textWithValidate func(name string, validate func(interface{}) error) (string, error)
+}
+
+func (m inputTextCustomMock) Text(name string, required bool, helper ...string) (string, error) {
+	return m.text(name, required)
+}
+
+func (m inputTextCustomMock) TextWithValidate(name string, validate func(interface{}) error, helper ...string) (string, error) {
+	return m.textWithValidate(name, validate)
+}
+
 type inputSecretMock struct{}
 
 func (inputSecretMock) Text(name string, required bool, helper ...string) (string, error) {
 	return "username=ritchie", nil
+}
+
+func (inputSecretMock) TextWithValidate(name string, validate func(interface{}) error, helper ...string) (string, error) {
+	return "mocked text", nil
 }
 
 type inputURLMock struct{}
@@ -39,16 +89,34 @@ func (inputURLMock) URL(name, defaultValue string) (string, error) {
 	return "http://localhost/mocked", nil
 }
 
+type inputURLErrorMock struct{}
+
+func (inputURLErrorMock) URL(name, defaultValue string) (string, error) {
+	return "http://localhost/mocked", errors.New("error on input url")
+}
+
 type inputIntMock struct{}
 
-func (inputIntMock) Int(name string) (int64, error) {
+func (inputIntMock) Int(name string, helper ...string) (int64, error) {
 	return 0, nil
+}
+
+type inputIntErrorMock struct{}
+
+func (inputIntErrorMock) Int(name string, helper ...string) (int64, error) {
+	return 0, errors.New("some error")
 }
 
 type inputPasswordMock struct{}
 
-func (inputPasswordMock) Password(label string) (string, error) {
+func (inputPasswordMock) Password(label string, helper ...string) (string, error) {
 	return "s3cr3t", nil
+}
+
+type inputPasswordErrorMock struct{}
+
+func (inputPasswordErrorMock) Password(label string, helper ...string) (string, error) {
+	return "", errors.New("password error")
 }
 
 type autocompleteGenMock struct{}
@@ -59,50 +127,53 @@ func (autocompleteGenMock) Generate(s autocomplete.ShellName, cmd *cobra.Command
 
 type inputTrueMock struct{}
 
-func (inputTrueMock) Bool(name string, items []string) (bool, error) {
+func (inputTrueMock) Bool(name string, items []string, helper ...string) (bool, error) {
 	return true, nil
 }
 
 type inputFalseMock struct{}
 
-func (inputFalseMock) Bool(name string, items []string) (bool, error) {
+func (inputFalseMock) Bool(name string, items []string, helper ...string) (bool, error) {
 	return false, nil
+}
+
+type inputBoolErrorMock struct{}
+
+func (inputBoolErrorMock) Bool(name string, items []string, helper ...string) (bool, error) {
+	return false, errors.New("error on boolean list")
 }
 
 type inputListMock struct{}
 
-func (inputListMock) List(name string, items []string) (string, error) {
+func (inputListMock) List(name string, items []string, helper ...string) (string, error) {
 	return "item-mocked", nil
 }
 
-type inputListCredMock struct{}
+type inputListCustomMock struct {
+	list func(name string, items []string) (string, error)
+}
 
-func (inputListCredMock) List(name string, items []string) (string, error) {
-	return "me", nil
+func (m inputListCustomMock) List(name string, items []string, helper ...string) (string, error) {
+	return m.list(name, items)
 }
 
 type inputListErrorMock struct{}
 
-func (inputListErrorMock) List(name string, items []string) (string, error) {
-	return "", errors.New("some error")
+func (inputListErrorMock) List(name string, items []string, helper ...string) (string, error) {
+	return "item-mocked", errors.New("some error")
 }
 
-type inputListCustomMock struct{
-	list func(name string, items []string) (string, error)
+type repoListerAdderCustomMock struct {
+	list func() (formula.Repos, error)
+	add  func(d formula.Repo) error
 }
 
-func (i inputListCustomMock) List(name string, items []string) (string, error) {
-	return i.list(name, items)
+func (a repoListerAdderCustomMock) List() (formula.Repos, error) {
+	return a.list()
 }
 
-type repoAdder struct{}
-
-func (a repoAdder) List() ([]formula.Repository, error) {
-	return []formula.Repository{}, nil
-}
-
-func (repoAdder) Add(d formula.Repository) error {
-	return nil
+func (a repoListerAdderCustomMock) Add(d formula.Repo) error {
+	return a.add(d)
 }
 
 type formCreator struct{}
@@ -118,6 +189,10 @@ func (formCreator) Build(workspacePath, formulaPath string) error {
 type workspaceForm struct{}
 
 func (workspaceForm) Add(workspace formula.Workspace) error {
+	return nil
+}
+
+func (workspaceForm) Delete(workspace formula.Workspace) error {
 	return nil
 }
 
@@ -164,44 +239,41 @@ func (ctxFindSetterMock) Set(ctx string) (rcontext.ContextHolder, error) {
 	return s.Set(ctx)
 }
 
-type repoDeleterMock struct{}
-
-func (m repoDeleterMock) List() ([]formula.Repository, error) {
-	return []formula.Repository{}, nil
-}
-
-func (repoDeleterMock) Delete(name string) error {
-	return nil
-}
-
 type repoListerMock struct{}
 
-func (repoListerMock) List() ([]formula.Repository, error) {
-	return []formula.Repository{}, nil
+func (repoListerMock) List() (formula.Repos, error) {
+	return formula.Repos{}, nil
 }
 
-type repoLoaderMock struct{}
+type repoListerNonEmptyMock struct{}
 
-func (repoLoaderMock) Load() error {
+func (repoListerNonEmptyMock) List() (formula.Repos, error) {
+	return formula.Repos{
+		{
+			Name:     "repoName",
+			Priority: 0,
+		},
+	}, nil
+}
+
+type repoListerErrorMock struct{}
+
+func (repoListerErrorMock) List() (formula.Repos, error) {
+	return formula.Repos{}, errors.New("some error")
+}
+
+type repoPrioritySetterMock struct{}
+
+func (repoPrioritySetterMock) SetPriority(name formula.RepoName, priority int) error {
 	return nil
 }
 
-type repoUpdaterMock struct{}
-
-func (repoUpdaterMock) Update() error {
-	return nil
+type repoPrioritySetterCustomMock struct {
+	setPriority func(name formula.RepoName, priority int) error
 }
 
-type loginManagerMock struct{}
-
-func (loginManagerMock) Login(security.User) error {
-	return nil
-}
-
-type logoutManagerMock struct{}
-
-func (logoutManagerMock) Logout() error {
-	return nil
+func (m repoPrioritySetterCustomMock) SetPriority(name formula.RepoName, priority int) error {
+	return m.setPriority(name, priority)
 }
 
 type credSetterMock struct{}
@@ -210,69 +282,77 @@ func (credSetterMock) Set(d credential.Detail) error {
 	return nil
 }
 
-type credSettingsMock struct{}
+type credSettingsMock struct {
+	error
+}
 
-type singleCredSettingsMock struct {}
+func (s credSettingsMock) ReadCredentialsFields(path string) (credential.Fields, error) {
+	return credential.Fields{}, nil
+}
 
-func (s singleCredSettingsMock) WriteDefaultCredentials(path string) error {
+func (s credSettingsMock) ReadCredentialsValue(path string) ([]credential.ListCredData, error) {
+	return []credential.ListCredData{}, nil
+}
+
+func (s credSettingsMock) WriteDefaultCredentialsFields(path string) error {
 	return nil
 }
 
-func (s singleCredSettingsMock) ReadCredentials(path string) (credential.Fields, error) {
-	return nil, nil
-}
-
-func (s singleCredSettingsMock) WriteCredentials(fields credential.Fields, path string) error {
+func (s credSettingsMock) WriteCredentialsFields(fields credential.Fields, path string) error {
 	return nil
 }
 
-type singleCredSettingsCustomMock struct {
-	writeDefaultCredentials func(path string) error
-	readCredentials func(path string) (credential.Fields, error)
-	writeCredentials func(fields credential.Fields, path string) error
+func (s credSettingsMock) ProviderPath() string {
+	return ""
 }
 
-func (s singleCredSettingsCustomMock) WriteDefaultCredentials(path string) error {
-	return s.writeDefaultCredentials(path)
+func (s credSettingsMock) CredentialsPath() string {
+	return ""
 }
 
-func (s singleCredSettingsCustomMock) ReadCredentials(path string) (credential.Fields, error) {
-	return s.readCredentials(path)
+type credSettingsCustomMock struct {
+	ReadCredentialsValueMock          func(path string) ([]credential.ListCredData, error)
+	ReadCredentialsFieldsMock         func(path string) (credential.Fields, error)
+	WriteDefaultCredentialsFieldsMock func(path string) error
+	WriteCredentialsFieldsMock        func(fields credential.Fields, path string) error
+	ProviderPathMock                  func() string
+	CredentialsPathMock               func() string
 }
 
-func (s singleCredSettingsCustomMock) WriteCredentials(fields credential.Fields, path string) error {
-	return s.writeCredentials(fields, path)
+func (cscm credSettingsCustomMock) ReadCredentialsFields(path string) (credential.Fields, error) {
+	return cscm.ReadCredentialsFieldsMock(path)
 }
 
-func (credSettingsMock) Fields() (credential.Fields, error) {
-	return credential.Fields{
-		"github": []credential.Field{
-			{
-				Name: "username",
-				Type: "text",
-			},
-			{
-				Name: "token",
-				Type: "password",
-			},
-		},
-	}, nil
+func (cscm credSettingsCustomMock) ReadCredentialsValue(path string) ([]credential.ListCredData, error) {
+	return cscm.ReadCredentialsValueMock(path)
 }
 
-type runnerMock struct {
-	error error
+func (cscm credSettingsCustomMock) WriteDefaultCredentialsFields(path string) error {
+	return nil
 }
 
-func (r runnerMock) Run(def formula.Definition, inputType api.TermInputType, verboseFlag string) error {
-	return r.error
+func (cscm credSettingsCustomMock) WriteCredentialsFields(fields credential.Fields, path string) error {
+	return nil
+}
+
+func (cscm credSettingsCustomMock) ProviderPath() string {
+	return ""
+}
+
+func (cscm credSettingsCustomMock) CredentialsPath() string {
+	return ""
 }
 
 type treeMock struct {
 	tree  formula.Tree
 	error error
+	value string
 }
 
 func (t treeMock) Tree() (map[string]formula.Tree, error) {
+	if t.value != "" {
+		return map[string]formula.Tree{t.value: t.tree}, t.error
+	}
 	return map[string]formula.Tree{"test": t.tree}, t.error
 }
 
@@ -280,106 +360,203 @@ func (t treeMock) MergedTree(bool) formula.Tree {
 	return t.tree
 }
 
-type passphraseManagerMock struct{}
-
-func (passphraseManagerMock) Save(security.Passphrase) error {
-	return nil
+type treeGeneratorMock struct {
 }
 
-type findSetterServerMock struct{}
-
-func (findSetterServerMock) Set(*server.Config) error {
-	return nil
+func (t treeGeneratorMock) Generate(path string) (formula.Tree, error) {
+	return formula.Tree{
+		Commands: api.Commands{
+			{
+				Id:     "root_group",
+				Parent: "root",
+				Usage:  "group",
+				Help:   "group for add",
+			},
+			{
+				Id:      "root_group_verb",
+				Parent:  "root_group",
+				Usage:   "verb",
+				Help:    "verb for add",
+				Formula: true,
+			},
+		},
+	}, nil
 }
 
-func (findSetterServerMock) Find() (server.Config, error) {
-	return server.Config{}, nil
+type GitRepositoryMock struct {
+	zipball   func(info git.RepoInfo, version string) (io.ReadCloser, error)
+	tags      func(info git.RepoInfo) (git.Tags, error)
+	latestTag func(info git.RepoInfo) (git.Tag, error)
 }
 
-type findSetterServerCustomMock struct {
-	set  func(*server.Config) error
-	find func() (server.Config, error)
+func (m GitRepositoryMock) Zipball(info git.RepoInfo, version string) (io.ReadCloser, error) {
+	return m.zipball(info, version)
 }
 
-func (m findSetterServerCustomMock) Set(ctx *server.Config) error {
-	return m.set(ctx)
+func (m GitRepositoryMock) Tags(info git.RepoInfo) (git.Tags, error) {
+	return m.tags(info)
 }
 
-func (m findSetterServerCustomMock) Find() (server.Config, error) {
-	return m.find()
+func (m GitRepositoryMock) LatestTag(info git.RepoInfo) (git.Tag, error) {
+	return m.latestTag(info)
 }
 
-type inputBoolCustomMock struct {
-	bool func(name string, items []string) (bool, error)
+type TutorialSetterMock struct{}
+
+func (TutorialSetterMock) Set(tutorial string) (rtutorial.TutorialHolder, error) {
+	return rtutorial.TutorialHolder{}, nil
 }
 
-func (m inputBoolCustomMock) Bool(name string, items []string) (bool, error) {
-	return m.bool(name, items)
+type TutorialFinderMock struct{}
+
+func (TutorialFinderMock) Find() (rtutorial.TutorialHolder, error) {
+	return rtutorial.TutorialHolder{Current: rtutorial.DefaultTutorial}, nil
 }
 
-type inputTextCustomMock struct {
-	text             func(name string, required bool) (string, error)
-	textWithValidate func(name string, validate func(interface{}) error) (string, error)
+type TutorialFindSetterMock struct{}
+
+func (TutorialFindSetterMock) Find() (rtutorial.TutorialHolder, error) {
+	f := TutorialFinderMock{}
+	return f.Find()
 }
 
-func (m inputTextCustomMock) Text(name string, required bool, helper ...string) (string, error) {
-	return m.text(name, required)
+func (TutorialFindSetterMock) Set(tutorial string) (rtutorial.TutorialHolder, error) {
+	s := TutorialSetterMock{}
+	return s.Set(tutorial)
 }
 
-func (m inputTextCustomMock) TextWithValidate(name string, validate func(interface{}) error, helper ...string) (string, error) {
-	return m.textWithValidate(name, validate)
+type TutorialFindSetterCustomMock struct {
+	find func() (rtutorial.TutorialHolder, error)
+	set  func(tutorial string) (rtutorial.TutorialHolder, error)
 }
 
-type loginManagerCustomMock struct {
-	login func(security.User) error
+func (t TutorialFindSetterCustomMock) Find() (rtutorial.TutorialHolder, error) {
+	return t.find()
 }
 
-func (m loginManagerCustomMock) Login(user security.User) error {
-	return m.login(user)
+func (t TutorialFindSetterCustomMock) Set(tutorial string) (rtutorial.TutorialHolder, error) {
+	return t.set(tutorial)
 }
 
-type repoLoaderCustomMock struct {
-	load func() error
+type TutorialFinderMockReturnDisabled struct{}
+
+func (TutorialFinderMockReturnDisabled) Find() (rtutorial.TutorialHolder, error) {
+	return rtutorial.TutorialHolder{Current: "disabled"}, nil
 }
 
-func (m repoLoaderCustomMock) Load() error {
-	return m.load()
+type DirManagerCustomMock struct {
+	exists func(dir string) bool
+	list   func(dir string, hiddenDir bool) ([]string, error)
+	isDir  func(dir string) bool
+	create func(dir string) error
 }
 
-type inputURLCustomMock struct {
-	url func(name, defaultValue string) (string, error)
+func (d DirManagerCustomMock) Exists(dir string) bool {
+	return d.exists(dir)
 }
 
-func (m inputURLCustomMock) URL(name, defaultValue string) (string, error) {
-	return m.url(name, defaultValue)
+func (d DirManagerCustomMock) List(dir string, hiddenDir bool) ([]string, error) {
+	return d.list(dir, hiddenDir)
 }
 
-type inputPasswordCustomMock struct {
-	password func(label string) (string, error)
+func (d DirManagerCustomMock) IsDir(dir string) bool {
+	return d.isDir(dir)
 }
 
-func (m inputPasswordCustomMock) Password(label string) (string, error) {
-	return m.password(label)
+func (d DirManagerCustomMock) Create(dir string) error {
+	return d.create(dir)
 }
 
-type InputMultilineMock struct{}
-
-func (InputMultilineMock) MultiLineText(name string, required bool) (string, error) {
-	return "username=ritchie", nil
+type LocalBuilderMock struct {
+	build func(workspacePath, formulaPath string) error
 }
 
-type otpResolverMock struct{}
-
-func (m otpResolverMock) RequestOtp(url, organization string) (otp.Response, error) {
-	return otp.Response{Otp: true}, nil
+func (l LocalBuilderMock) Build(workspacePath, formulaPath string) error {
+	return l.build(workspacePath, formulaPath)
 }
 
-type otpResolverCustomMock struct {
-	requestOtp func(url, organization string) (otp.Response, error)
+type WatcherMock struct {
+	watch func(workspacePath, formulaPath string)
 }
 
-func (m otpResolverCustomMock) RequestOtp(url, organization string) (otp.Response, error) {
-	return m.requestOtp(url, organization)
+func (w WatcherMock) Watch(workspacePath, formulaPath string) {
+	w.watch(workspacePath, formulaPath)
+}
+
+type WorkspaceAddListValidatorCustomMock struct {
+	add      func(workspace formula.Workspace) error
+	list     func() (formula.Workspaces, error)
+	validate func(workspace formula.Workspace) error
+}
+
+func (w WorkspaceAddListValidatorCustomMock) Add(workspace formula.Workspace) error {
+	return w.add(workspace)
+}
+
+func (w WorkspaceAddListValidatorCustomMock) List() (formula.Workspaces, error) {
+	return w.list()
+}
+
+func (w WorkspaceAddListValidatorCustomMock) Validate(workspace formula.Workspace) error {
+	return w.validate(workspace)
+}
+
+var (
+	defaultRepoAdderMock = repoListerAdderCustomMock{
+		add: func(d formula.Repo) error {
+			return nil
+		},
+		list: func() (formula.Repos, error) {
+			return formula.Repos{}, nil
+		},
+	}
+
+	defaultGitRepositoryMock = GitRepositoryMock{
+		latestTag: func(info git.RepoInfo) (git.Tag, error) {
+			return git.Tag{}, nil
+		},
+		tags: func(info git.RepoInfo) (git.Tags, error) {
+			return git.Tags{git.Tag{Name: "1.0.0"}}, nil
+		},
+		zipball: func(info git.RepoInfo, version string) (io.ReadCloser, error) {
+			return nil, nil
+		},
+	}
+)
+
+type FormulaExecutorMock struct {
+	err error
+}
+
+func (f FormulaExecutorMock) Execute(exe formula.ExecuteData) error {
+	return f.err
+}
+
+type ConfigRunnerMock struct {
+	runType   formula.RunnerType
+	createErr error
+	findErr   error
+}
+
+func (c ConfigRunnerMock) Create(runType formula.RunnerType) error {
+	return c.createErr
+}
+
+func (c ConfigRunnerMock) Find() (formula.RunnerType, error) {
+	return c.runType, c.findErr
+}
+
+type RepositoryListUpdaterCustomMock struct {
+	list   func() (formula.Repos, error)
+	update func(name formula.RepoName, version formula.RepoVersion) error
+}
+
+func (m RepositoryListUpdaterCustomMock) List() (formula.Repos, error) {
+	return m.list()
+}
+
+func (m RepositoryListUpdaterCustomMock) Update(name formula.RepoName, version formula.RepoVersion) error {
+	return m.update(name, version)
 }
 
 type FileManagerMock struct{}

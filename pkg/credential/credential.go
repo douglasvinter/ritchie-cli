@@ -1,13 +1,20 @@
-package credential
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-const (
-	// Other credential path /admin
-	Other Type = "admin"
-	// Me credential path /me
-	Me Type = "me"
-	// Org credential path /org
-	Org Type = "org"
-)
+package credential
 
 // Info represents a credential information of the user.
 type Detail struct {
@@ -32,24 +39,42 @@ type Field struct {
 	Type string `json:"type"`
 }
 
-// Fields represents a collection of credential fields returned by the Server (Team).
-// Fields are used on single to represents providers.json
+type ListCredDatas []ListCredData
+
+type ListCredData struct {
+	Provider   string
+	Credential string
+	Context    string
+}
+
+// Fields are used to represents providers.json
 type Fields map[string][]Field
 
 type Setter interface {
 	Set(d Detail) error
 }
 
-type Finder interface {
+type CredFinder interface {
 	Find(service string) (Detail, error)
 }
 
-type Settings interface {
-	Fields() (Fields, error)
+type Reader interface {
+	ReadCredentialsFields(path string) (Fields, error)
+	ReadCredentialsValue(path string) ([]ListCredData, error)
 }
 
-type SingleSettings interface {
-	ReadCredentials(path string) (Fields, error)
-	WriteCredentials(fields Fields, path string) error
-	WriteDefaultCredentials(path string) error
+type Writer interface {
+	WriteCredentialsFields(fields Fields, path string) error
+	WriteDefaultCredentialsFields(path string) error
+}
+
+type Pather interface {
+	ProviderPath() string
+	CredentialsPath() string
+}
+
+type ReaderWriterPather interface {
+	Reader
+	Writer
+	Pather
 }

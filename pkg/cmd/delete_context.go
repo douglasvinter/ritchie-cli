@@ -1,3 +1,19 @@
+/*
+ * Copyright 2020 ZUP IT SERVICOS EM TECNOLOGIA E INOVACAO SA
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package cmd
 
 import (
@@ -30,10 +46,12 @@ func NewDeleteContextCmd(
 	d := deleteContextCmd{fr, ib, il}
 
 	cmd := &cobra.Command{
-		Use:     "context",
-		Short:   "Delete context for ritchie-cli",
-		Example: "rit delete context",
-		RunE:    RunFuncE(d.runStdin(), d.runPrompt()),
+		Use:       "context",
+		Short:     "Delete context for credentials",
+		Example:   "rit delete context",
+		RunE:      RunFuncE(d.runStdin(), d.runPrompt()),
+		ValidArgs: []string{""},
+		Args:      cobra.OnlyValidArgs,
 	}
 
 	cmd.LocalFlags()
@@ -95,7 +113,6 @@ func (d deleteContextCmd) runStdin() CommandRunnerFunc {
 
 		err = stdin.ReadJson(os.Stdin, &dc)
 		if err != nil {
-			prompt.Error(stdin.MsgInvalidInput)
 			return err
 		}
 
